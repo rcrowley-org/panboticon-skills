@@ -1,0 +1,9 @@
+{
+  "name": "panboticon-audit",
+  "version": "0.1.0",
+  "description": "Audit and summarize human and bot user activity from Linux kernel audit logs, systemd journal, and other /var/log sources.",
+  "author": {
+    "name": "Richard Crowley",
+    "email": "rcrowley@rcrowley.org"
+  }
+}

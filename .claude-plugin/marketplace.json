@@ -1,0 +1,14 @@
+{
+  "name": "panboticon-audit",
+  "owner": {
+    "name": "Richard Crowley",
+    "email": "rcrowley@rcrowley.org"
+  },
+  "plugins": [
+    {
+      "name": "panboticon-audit",
+      "source": ".",
+      "description": "Audit and summarize human and bot user activity from Linux kernel audit logs, systemd journal, and other /var/log sources."
+    }
+  ]
+}
