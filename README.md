@@ -10,7 +10,7 @@ In Claude Code:
 
     /plugin marketplace add rcrowley/panboticon-audit
     # or
-    /plugin marketplace add .
+    /plugin marketplace add ./
 
     /plugin install panboticon-audit@panboticon-audit
 
