@@ -1,14 +1,14 @@
 {
-  "name": "panboticon-audit",
+  "name": "panboticon-skills",
   "owner": {
     "name": "Richard Crowley",
     "email": "rcrowley@rcrowley.org"
   },
   "plugins": [
     {
-      "name": "panboticon-audit",
+      "name": "panboticon-skills",
       "source": ".",
-      "description": "Audit and summarize human and bot user activity from Linux kernel audit logs, systemd journal, and other /var/log sources."
+      "description": "Skills for managing Panboticon <https://github.com/rcrowley/panboticon> instances."
     }
   ]
 }

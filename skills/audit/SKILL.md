@@ -1,5 +1,5 @@
 ---
-name: panboticon-audit
+name: audit
 description: Audit and summarize human and bot user activity based on Linux kernel audit logs, systemd journal, etc. Use whenever asked to audit, review, report on, or summarize actions, activity, history, logs, or what a bot did.
 allowed-tools: Agent, Bash, Glob, Grep, Write
 user-invocable: true

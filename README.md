@@ -1,22 +1,24 @@
-Panboticon audit
-================
+Panboticon skills
+=================
 
-`/panboticon-audit` skill that reports on what those sneaky bots have been up to.
+A collection of Claude Code skills. Currently:
+
+* `/audit` reports on what those sneaky bots have been up to.
 
 Install
 -------
 
 In Claude Code:
 
-    /plugin marketplace add rcrowley/panboticon-audit
+    /plugin marketplace add rcrowley/panboticon-skills
     # or
     /plugin marketplace add ./
 
-    /plugin install panboticon-audit@panboticon-audit
+    /plugin install panboticon-skills@panboticon-skills
 
 Elsewhere: IDK.
 
 Usage
 -----
 
-    /panboticon-audit
+    /audit
