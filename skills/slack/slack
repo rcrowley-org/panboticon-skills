@@ -1,0 +1,21 @@
+#!/bin/sh
+
+set -e
+
+: ${SLACK_INCOMING_WEBHOOK_URL:="$PANBOTICON_SLACK_INCOMING_WEBHOOK_URL"}
+if [ -z "$SLACK_INCOMING_WEBHOOK_URL" ]
+then
+    echo "neither SLACK_INCOMING_WEBHOOK_URL nor PANBOTICON_SLACK_INCOMING_WEBHOOK_URL set in the environment" >&2
+    exit 1
+fi
+
+usage() {
+    printf "Usage: \e[4mJSON-encoded payload\e[0m | %s\n" "$(basename "$0")" >&2
+    exit "$1"
+}
+if [ "$1" = "-h" -o "$1" = "--help" ]
+then usage 0
+fi
+
+curl -S -X"POST" --data-urlencode "payload"@- -s "$SLACK_INCOMING_WEBHOOK_URL" 2>"/dev/null"
+echo # Slack doesn't send a trailing newline

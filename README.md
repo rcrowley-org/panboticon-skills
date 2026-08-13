@@ -4,6 +4,8 @@ Panboticon skills
 A collection of AI agent skills. Currently:
 
 * `/audit` reports on what those sneaky bots have been up to.
+* `/bot` sends a prompt from the human user to the bot user, which works on it in Pi in a tmux session.
+* `/slack` sends a message to Slack using an incoming webhook URL found in the environment.
 
 Install
 -------
