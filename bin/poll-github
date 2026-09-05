@@ -4,13 +4,17 @@ set -e
 
 umask 077
 
+PATH="$HOME/src/bin:$HOME/.local/bin:$HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 usage() {
-    printf "Usage: %s [-d \e[4mdatabase\e[0m]\n" "$(basename "$0")" >&2
-    printf "  -d \e[4mdatabase\e[0m  SQLite database path\n" >&2
+    printf "Usage: %s [-d \e[4mdatabase\e[0m] [-o \e[4morganization\e[0m]...]\n" "$(basename "$0")" >&2
+    printf "  -d \e[4mdatabase\e[0m      SQLite database path\n" >&2
+    printf "  -o \e[4morganization\e[0m  GitHub organization to poll (repeatable); default is every organization in ~/.panboticon/etc/github-app/installations.json\n" >&2
     exit "$1"
 }
 
 DATABASE="${XDG_STATE_HOME:-$HOME/.local/state}/rbotley/github.sqlite3"
+ORGANIZATIONS=""
 while [ "$#" -gt 0 ]
 do
     case "$1" in
@@ -18,6 +22,10 @@ do
         "-d"|"--database") DATABASE="$2" shift 2;;
         "-d"*) DATABASE="$(echo "$1" | cut -c"3-")" shift;;
         "--database="*) DATABASE="$(echo "$1" | cut -d"=" -f"2-")" shift;;
+
+        "-o"|"--organization") ORGANIZATIONS="$ORGANIZATIONS $2" shift 2;;
+        "-o"*) ORGANIZATIONS="$ORGANIZATIONS $(echo "$1" | cut -c"3-")" shift;;
+        "--organization="*) ORGANIZATIONS="$ORGANIZATIONS $(echo "$1" | cut -d"=" -f"2-")" shift;;
 
         "-h"|"--help") usage 0;;
 
@@ -35,17 +43,17 @@ command -v tmux >/dev/null
 TMP="$(mktemp -d)"
 trap "rm -f -r \"$TMP\"" EXIT
 
-if [ -z "$GH_TOKEN" ]
-then usage 1
-fi
-
 mkdir -p "$(dirname "$DATABASE")"
 sqlite3 "$DATABASE" 'CREATE TABLE IF NOT EXISTS findings (key TEXT PRIMARY KEY, found_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'
+
+BOT_LOGIN="${BOT_LOGIN:-rbotley[bot]}"
+
+QUERY='query($endCursor:String,$searchQuery:String!){search(query:$searchQuery,type:ISSUE,first:100,after:$endCursor){nodes{... on Issue{id title body url repository{nameWithOwner}} ... on PullRequest{id title body url repository{nameWithOwner} commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}}} pageInfo{hasNextPage endCursor}}}'
 
 github_graphql() {
     SEARCH_QUERY="$1" OUTPUT="$2"
     CURSOR="" PAGE="0"
-    : >"$OUTPUT"
+    : >"$OUTPUT" || return 1
     while :
     do
         PAGE="$((PAGE + 1))"
@@ -53,14 +61,14 @@ github_graphql() {
             --arg endCursor "$CURSOR" \
             --arg query "$QUERY" \
             --arg searchQuery "$SEARCH_QUERY" \
-            -e -n \
+            -n \
             '{
                 query: $query,
                 variables: {
                     endCursor: (if $endCursor == "" then null else $endCursor end),
                     searchQuery: $searchQuery
                 }
-            }' >"$TMP/graphql-$PAGE.req.json"
+            }' >"$TMP/graphql-$PAGE.req.json" || return 1
         if ! curl \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
@@ -74,12 +82,37 @@ github_graphql() {
             cat "$TMP/graphql-$PAGE.resp.json" >&2
             return 1
         fi
-        cat "$TMP/graphql-$PAGE.resp.json" >>"$OUTPUT"
-        if [ "$(jq -e -r '.data.search.pageInfo.hasNextPage' "$TMP/graphql-$PAGE.resp.json")" != "true" ]
+        cat "$TMP/graphql-$PAGE.resp.json" >>"$OUTPUT" || return 1
+        printf "\n" >>"$OUTPUT" || return 1
+        HAS_NEXT_PAGE="$(jq -r '.data.search.pageInfo.hasNextPage' "$TMP/graphql-$PAGE.resp.json")" || return 1
+        if [ "$HAS_NEXT_PAGE" != "true" ]
         then break
         fi
-        CURSOR="$(jq -e -r '.data.search.pageInfo.endCursor' "$TMP/graphql-$PAGE.resp.json")"
+        CURSOR="$(jq -r '.data.search.pageInfo.endCursor' "$TMP/graphql-$PAGE.resp.json")" || return 1
     done
+}
+
+github_token() {
+    if [ -n "$GH_TOKEN" ]
+    then
+        printf "%s\n" "$GH_TOKEN"
+        return
+    fi
+    printf "protocol=https\nhost=github.com\nusername=x-access-token\npath=%s/x.git\n\n" "$1" |
+    "$HOME/.panboticon/bin/git-credential-helper" "get" |
+    sed -n "s/^password=//p"
+}
+
+process_response() {
+    RESPONSE="$1" FILTER="$2" OUTPUT="$3"
+    jq -c 'select(.data.search == null) | {errors}' "$RESPONSE" >"$TMP/errors-fatal.jsonl" || return 1
+    if [ -s "$TMP/errors-fatal.jsonl" ]
+    then
+        cat "$TMP/errors-fatal.jsonl" >&2
+        return 1
+    fi
+    jq -c 'select(.errors != null) | .errors | map({type, message})' "$RESPONSE" >&2 || return 1
+    jq -c "$FILTER" "$RESPONSE" >"$OUTPUT"
 }
 
 shell_quote() {
@@ -121,7 +154,6 @@ launch() {
     echo
     echo
     echo "$TEXT"
-    sqlite3 "$DATABASE" "DELETE FROM findings WHERE key = '$SQL_KEY';" # XXX
     return # XXX
 
     PROMPT_FILE="$(mktemp "$DATABASE.prompt.XXXXXX")"
@@ -148,24 +180,51 @@ launch() {
     fi
 }
 
-QUERY='query($endCursor:String,$searchQuery:String!){search(query:$searchQuery,type:ISSUE,first:100,after:$endCursor){nodes{... on Issue{id title body url repository{nameWithOwner}} ... on PullRequest{id title body url repository{nameWithOwner} commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}}} pageInfo{hasNextPage endCursor}}}'
+poll() {
+    PREFIX="$1"
+    GH_TOKEN="$(github_token "$PREFIX")"
+    if [ -z "$GH_TOKEN" ]
+    then
+        echo "failed to get a GitHub token for $PREFIX" >&2
+        return 1
+    fi
 
-github_graphql 'is:issue is:open assignee:"rbotley[bot]"' "$TMP/assigned-issues-response.jsonl"
-jq -c 'if .errors then error(.errors | tostring) else .data.search.nodes[] | select(.id != null) | {key:("github:assigned-issue:" + .id),title:.title,text:("GitHub issue assigned to rbotley[bot]\nRepository: " + .repository.nameWithOwner + "\nURL: " + .url + "\nTitle: " + .title + "\n\n" + (.body // ""))} end' "$TMP/assigned-issues-response.jsonl" >"$TMP/assigned-issues.jsonl"
+    github_graphql "is:issue is:open assignee:\"$BOT_LOGIN\"" "$TMP/$PREFIX-assigned-issues-response.jsonl" || return 1
+    process_response "$TMP/$PREFIX-assigned-issues-response.jsonl" '.data.search.nodes[] | select(.id != null) | {key:("github:assigned-issue:" + .id),title:.title,text:("GitHub issue assigned to rbotley[bot]\nRepository: " + .repository.nameWithOwner + "\nURL: " + .url + "\nTitle: " + .title + "\n\n" + (.body // ""))}' "$TMP/$PREFIX-assigned-issues.jsonl" || return 1
 
-github_graphql 'is:pr is:open author:"rbotley[bot]"' "$TMP/passing-pull-requests-response.jsonl"
-jq -c 'if .errors then error(.errors | tostring) else .data.search.nodes[] | select(.id != null and .commits.nodes[0].commit.statusCheckRollup.state == "SUCCESS") | {key:("github:passing-pull-request:" + .id + ":" + .commits.nodes[0].commit.oid),title:.title,text:("GitHub pull request opened by rbotley[bot] has all status checks passing\nRepository: " + .repository.nameWithOwner + "\nURL: " + .url + "\nTitle: " + .title + "\n\n" + (.body // ""))} end' "$TMP/passing-pull-requests-response.jsonl" >"$TMP/passing-pull-requests.jsonl"
+    github_graphql "is:pr is:open author:\"$BOT_LOGIN\"" "$TMP/$PREFIX-passing-pull-requests-response.jsonl" || return 1
+    process_response "$TMP/$PREFIX-passing-pull-requests-response.jsonl" '.data.search.nodes[] | select(.id != null and .commits.nodes[0].commit.statusCheckRollup.state == "SUCCESS") | {key:("github:passing-pull-request:" + .id + ":" + .commits.nodes[0].commit.oid),title:.title,text:("GitHub pull request opened by rbotley[bot] has all status checks passing\nRepository: " + .repository.nameWithOwner + "\nURL: " + .url + "\nTitle: " + .title + "\n\n" + (.body // ""))}' "$TMP/$PREFIX-passing-pull-requests.jsonl" || return 1
 
-github_graphql 'is:pr is:open review-requested:"rbotley[bot]"' "$TMP/review-requests-response.jsonl"
-jq -c 'if .errors then error(.errors | tostring) else .data.search.nodes[] | select(.id != null) | {key:("github:review-request:" + .id),title:.title,text:("GitHub pull request assigned to rbotley[bot] for review\nRepository: " + .repository.nameWithOwner + "\nURL: " + .url + "\nTitle: " + .title + "\n\n" + (.body // ""))} end' "$TMP/review-requests-response.jsonl" >"$TMP/review-requests.jsonl"
+    github_graphql "is:pr is:open review-requested:\"$BOT_LOGIN\"" "$TMP/$PREFIX-review-requests-response.jsonl" || return 1
+    process_response "$TMP/$PREFIX-review-requests-response.jsonl" '.data.search.nodes[] | select(.id != null) | {key:("github:review-request:" + .id),title:.title,text:("GitHub pull request assigned to rbotley[bot] for review\nRepository: " + .repository.nameWithOwner + "\nURL: " + .url + "\nTitle: " + .title + "\n\n" + (.body // ""))}' "$TMP/$PREFIX-review-requests.jsonl" || return 1
 
-for FILE in "$TMP/assigned-issues.jsonl" "$TMP/passing-pull-requests.jsonl" "$TMP/review-requests.jsonl"
-do
-    while IFS= read -r FINDING
+    for FILE in "$TMP/$PREFIX-assigned-issues.jsonl" "$TMP/$PREFIX-passing-pull-requests.jsonl" "$TMP/$PREFIX-review-requests.jsonl"
     do
-        KEY="$(printf "%s" "$FINDING" | jq -e -r '.key')"
-        TITLE="$(printf "%s" "$FINDING" | jq -e -r '.title')"
-        TEXT="$(printf "%s" "$FINDING" | jq -e -r '.text')"
-        launch "$KEY" "$TITLE" "$TEXT"
-    done <"$FILE"
-done
+        while IFS= read -r FINDING
+        do
+            KEY="$(printf "%s" "$FINDING" | jq -e -r '.key')" || return 1
+            TITLE="$(printf "%s" "$FINDING" | jq -e -r '.title')" || return 1
+            TEXT="$(printf "%s" "$FINDING" | jq -e -r '.text')" || return 1
+            launch "$KEY" "$TITLE" "$TEXT" || return 1
+        done <"$FILE"
+    done
+}
+
+if [ -n "$GH_TOKEN" ]
+then
+    poll "x"
+else
+    if [ -z "$ORGANIZATIONS" ]
+    then ORGANIZATIONS=" $(jq -e -r '.[].ORGANIZATION' "$HOME/.panboticon/etc/github-app/installations.json")"
+    fi
+    FAILED=""
+    for ORGANIZATION in $ORGANIZATIONS
+    do
+        if ! ( poll "$ORGANIZATION" )
+        then
+            echo "failed to poll $ORGANIZATION" >&2
+            FAILED="yes"
+        fi
+    done
+    [ -z "$FAILED" ]
+fi

@@ -2,4 +2,4 @@
 
 MAILTO=""
 
-#* * * * * flock -n ~rcrowley/src/panboticon-skills/bin/poll-github ~rcrowley/src/panboticon-skills/bin/poll-github 2>&1 | logger -t poll-github
+* * * * * flock -n "$HOME/src/panboticon-skills/bin/poll-github" "$HOME/src/panboticon-skills/bin/poll-github" 2>&1 | logger -t poll-github
