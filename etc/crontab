@@ -1,0 +1,5 @@
+# TODO could switch to a systemd service and timer and `loginctl enable-linger`
+
+MAILTO=""
+
+#* * * * * flock -n ~rcrowley/src/panboticon-skills/bin/poll-github ~rcrowley/src/panboticon-skills/bin/poll-github 2>&1 | logger -t poll-github
