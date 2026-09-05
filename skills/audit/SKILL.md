@@ -11,13 +11,15 @@ user-invocable: true
 
 Audit all log data available on the server unless instructed to audit only a specific time period.
 
-1. Linux kernel audit logs from auditd in `/var/log/audit`
-2. All other files in `/var/log`; glob to find files
-3. The systemd journal via `journalctl`
+1. Agent session logs in e.g. `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`.
+2. Linux kernel audit logs from auditd in `/var/log/audit`
+3. All other files in `/var/log`; glob to find files
+4. The systemd journal via `journalctl`
 
 ## Principles
 
-* Attribute records by `auid=` not `uid=` as this field survives e.g. `sudo` and `setuid` calls.
+* Attribute agent logs to the user that owns the file.
+* Attribute kernal audit log records by `auid=` not `uid=` as this field survives e.g. `sudo` and `setuid` calls.
 * Audit activity by non-system users. Conventionally, that's any (a)uid ≥ 1000. (a)uid 1234 and (a)uid 10101, if they exist, are of particular interest.
 * Do not worry about identifying humans and bots. The reader will know which is which by name and (a)uid.
 * Ignore records with `auid=4294967295`.
@@ -33,7 +35,7 @@ Audit all log data available on the server unless instructed to audit only a spe
 
 2. For each of these files plus the systemd journal, in a sub-agent, do the following:
 
-    a. Extract timestamps from the `audit(<timestamp>.` in audit log records, from the prefix of systemd journal entries, etc. - fall back to extracting common date formats and parsing them with the (GNU) `date -u -d` command. Convert all to RFC 3339 format.
+    a. Extract timestamps from the `"timestamp"` field in each JSON like of JSONL agent session logs, the `audit(<timestamp>.` in audit log records, from the prefix of systemd journal entries, etc. - fall back to extracting common date formats and parsing them with the (GNU) `date -u -d` command. Convert all to RFC 3339 format.
 
     b. If auditing a specific time period, drop records with timestamps outside that period. In case of the systemd journal, use `journalctl --since ... --until ...` to filter.
 
