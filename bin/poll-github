@@ -2,22 +2,25 @@
 
 set -e
 
-umask 077
-
 usage() {
-    printf "Usage: %s [-d \e[4mdatabase\e[0m]\n" "$(basename "$0")" >&2
-    printf "  -d \e[4mdatabase\e[0m  SQLite database path\n" >&2
+    printf "Usage: %s [-q \e[4mquery\e[0m] [-s \e[4msince\e[0m]\n" "$(basename "$0")" >&2
+    printf "  -q \e[4mquery\e[0m  search query; prefix with \"@\" for an app or user; additionally suffix with \"[bot]\" for an app\n" >&2
+    printf "  -s \e[4msince\e[0m  absolute or relative timestamp (default \"24 hours ago\")\n" >&2
     exit "$1"
 }
 
-DATABASE="${XDG_STATE_HOME:-$HOME/.local/state}/rbotley/github.sqlite3"
+QUERY="" SINCE="24 hours ago"
 while [ "$#" -gt 0 ]
 do
     case "$1" in
 
-        "-d"|"--database") DATABASE="$2" shift 2;;
-        "-d"*) DATABASE="$(echo "$1" | cut -c"3-")" shift;;
-        "--database="*) DATABASE="$(echo "$1" | cut -d"=" -f"2-")" shift;;
+        "-q"|"--query") QUERY="$2" shift 2;;
+        "-q"*) QUERY="$(echo "$1" | cut -c"3-")" shift;;
+        "--query="*) QUERY="$(echo "$1" | cut -d"=" -f"2-")" shift;;
+
+        "-s"|"--since") SINCE="$2" shift 2;;
+        "-s"*) SINCE="$(echo "$1" | cut -c"3-")" shift;;
+        "--since="*) SINCE="$(echo "$1" | cut -d"=" -f"2-")" shift;;
 
         "-h"|"--help") usage 0;;
 
@@ -25,147 +28,61 @@ do
 
     esac
 done
+if [ -z "$QUERY" ]
+then usage 1
+fi
 
-command -v curl >/dev/null
-command -v jq >/dev/null
-command -v pi >/dev/null
-command -v sqlite3 >/dev/null
-command -v tmux >/dev/null
+SINCE_DATE=">=$(date -d "$SINCE" -u +"%Y-%m-%d")"
 
 TMP="$(mktemp -d)"
 trap "rm -f -r \"$TMP\"" EXIT
 
-if [ -z "$GH_TOKEN" ]
-then usage 1
-fi
+if echo "$QUERY" | grep -q "^@"
+then gh search issues \
+    --include-prs \
+    --involves "$QUERY" \
+    --json "repository,title,url,state,number,updatedAt" \
+    --limit 100 \
+    --state "open" \
+    --updated "$SINCE_DATE"
+fi >"$TMP/involves.json"
 
-mkdir -p "$(dirname "$DATABASE")"
-sqlite3 "$DATABASE" 'CREATE TABLE IF NOT EXISTS findings (key TEXT PRIMARY KEY, found_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'
+gh search issues \
+    "$QUERY" \
+    --include-prs \
+    --json "repository,title,url,state,number,updatedAt" \
+    --limit 100 \
+    --state "open" \
+    --updated "$SINCE_DATE" \
+    >"$TMP/query.json"
 
-github_graphql() {
-    SEARCH_QUERY="$1" OUTPUT="$2"
-    CURSOR="" PAGE="0"
-    : >"$OUTPUT"
-    while :
-    do
-        PAGE="$((PAGE + 1))"
-        jq \
-            --arg endCursor "$CURSOR" \
-            --arg query "$QUERY" \
-            --arg searchQuery "$SEARCH_QUERY" \
-            -e -n \
-            '{
-                query: $query,
-                variables: {
-                    endCursor: (if $endCursor == "" then null else $endCursor end),
-                    searchQuery: $searchQuery
-                }
-            }' >"$TMP/graphql-$PAGE.req.json"
-        if ! curl \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            -X "POST" \
-            -d @"$TMP/graphql-$PAGE.req.json" \
-            -f -s \
-            "https://api.github.com/graphql" >"$TMP/graphql-$PAGE.resp.json"
-        then
-            echo "failed to query the GitHub API" >&2
-            cat "$TMP/graphql-$PAGE.resp.json" >&2
-            return 1
-        fi
-        cat "$TMP/graphql-$PAGE.resp.json" >>"$OUTPUT"
-        if [ "$(jq -e -r '.data.search.pageInfo.hasNextPage' "$TMP/graphql-$PAGE.resp.json")" != "true" ]
-        then break
-        fi
-        CURSOR="$(jq -e -r '.data.search.pageInfo.endCursor' "$TMP/graphql-$PAGE.resp.json")"
-    done
-}
+gh search issues \
+    "${QUERY#@}" \
+    --include-prs \
+    --json "repository,title,url,state,number,updatedAt" \
+    --limit 100 \
+    --state "open" \
+    --updated "$SINCE_DATE" \
+    >"$TMP/query-@.json"
 
-shell_quote() {
-    printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
-}
+gh search issues \
+    "${QUERY%[bot]}" \
+    --include-prs \
+    --json "repository,title,url,state,number,updatedAt" \
+    --limit 100 \
+    --state "open" \
+    --updated "$SINCE_DATE" \
+    >"$TMP/query-[bot].json"
 
-window_name() {
-    printf "%s\n" "$1" |
-    tr '[:upper:]' '[:lower:]' |
-    tr -cs '[:alnum:]' '\n' |
-    awk '
-        NF && count < 4 {
-            words[++count] = $1
-        }
-        END {
-            if (count == 0) {
-                words[++count] = "new"
-            }
-            if (count == 1) {
-                words[++count] = "finding"
-            }
-            for (i = 1; i <= count; i++) {
-                printf "%s%s", i == 1 ? "" : "-", words[i]
-            }
-            printf "\n"
-        }
-    '
-}
+QUERY="${QUERY#@}"
+QUERY="${QUERY%[bot]}"
+gh search issues \
+    "$QUERY" \
+    --include-prs \
+    --json "repository,title,url,state,number,updatedAt" \
+    --limit 100 \
+    --state "open" \
+    --updated "$SINCE_DATE" \
+    >"$TMP/query-@-[bot].json"
 
-launch() {
-    KEY="$1" TITLE="$2" TEXT="$3"
-    SQL_KEY="$(printf "%s" "$KEY" | sed "s/'/''/g")"
-    INSERTED="$(sqlite3 "$DATABASE" "INSERT OR IGNORE INTO findings (key) VALUES ('$SQL_KEY'); SELECT changes();")"
-    if [ "$INSERTED" != "1" ]
-    then return
-    fi
-
-    echo
-    echo
-    echo
-    echo "$TEXT"
-    sqlite3 "$DATABASE" "DELETE FROM findings WHERE key = '$SQL_KEY';" # XXX
-    return # XXX
-
-    PROMPT_FILE="$(mktemp "$DATABASE.prompt.XXXXXX")"
-    LAUNCHER="$PROMPT_FILE.sh"
-    printf "TODO PREAMBLE\n\n%s\n\nTODO OUTPUT INSTRUCTIONS.\n" "$TEXT" >"$PROMPT_FILE"
-    printf "Say hello.\n" >"$PROMPT_FILE" # XXX
-    printf '%s\n' '#!/bin/sh' >"$LAUNCHER"
-    printf 'PROMPT="$(cat %s)"\n' "$(shell_quote "$PROMPT_FILE")" >>"$LAUNCHER"
-    printf 'rm -f %s %s\n' "$(shell_quote "$PROMPT_FILE")" "$(shell_quote "$LAUNCHER")" >>"$LAUNCHER"
-    printf 'exec pi -p "$PROMPT"\n' >>"$LAUNCHER"
-    chmod 700 "$LAUNCHER"
-    NAME="$(window_name "$TITLE")"
-    COMMAND="$(shell_quote "$LAUNCHER")"
-    if tmux has-session -t "auto" 2>/dev/null
-    then
-        if ! tmux new-window -d -n "$NAME" -t "auto:" "$COMMAND"
-        then sqlite3 "$DATABASE" "DELETE FROM findings WHERE key = '$SQL_KEY';"; return 1
-        fi
-    elif ! tmux new-session -d -s "auto" -n "$NAME" "$COMMAND"
-    then
-        if ! tmux new-window -d -n "$NAME" -t "auto:" "$COMMAND"
-        then sqlite3 "$DATABASE" "DELETE FROM findings WHERE key = '$SQL_KEY';"; return 1
-        fi
-    fi
-}
-
-QUERY='query($endCursor:String,$searchQuery:String!){search(query:$searchQuery,type:ISSUE,first:100,after:$endCursor){nodes{... on Issue{id title body url repository{nameWithOwner}} ... on PullRequest{id title body url repository{nameWithOwner} commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}}} pageInfo{hasNextPage endCursor}}}'
-
-github_graphql 'is:issue is:open assignee:"rbotley[bot]"' "$TMP/assigned-issues-response.jsonl"
-jq -c 'if .errors then error(.errors | tostring) else .data.search.nodes[] | select(.id != null) | {key:("github:assigned-issue:" + .id),title:.title,text:("GitHub issue assigned to rbotley[bot]\nRepository: " + .repository.nameWithOwner + "\nURL: " + .url + "\nTitle: " + .title + "\n\n" + (.body // ""))} end' "$TMP/assigned-issues-response.jsonl" >"$TMP/assigned-issues.jsonl"
-
-github_graphql 'is:pr is:open author:"rbotley[bot]"' "$TMP/passing-pull-requests-response.jsonl"
-jq -c 'if .errors then error(.errors | tostring) else .data.search.nodes[] | select(.id != null and .commits.nodes[0].commit.statusCheckRollup.state == "SUCCESS") | {key:("github:passing-pull-request:" + .id + ":" + .commits.nodes[0].commit.oid),title:.title,text:("GitHub pull request opened by rbotley[bot] has all status checks passing\nRepository: " + .repository.nameWithOwner + "\nURL: " + .url + "\nTitle: " + .title + "\n\n" + (.body // ""))} end' "$TMP/passing-pull-requests-response.jsonl" >"$TMP/passing-pull-requests.jsonl"
-
-github_graphql 'is:pr is:open review-requested:"rbotley[bot]"' "$TMP/review-requests-response.jsonl"
-jq -c 'if .errors then error(.errors | tostring) else .data.search.nodes[] | select(.id != null) | {key:("github:review-request:" + .id),title:.title,text:("GitHub pull request assigned to rbotley[bot] for review\nRepository: " + .repository.nameWithOwner + "\nURL: " + .url + "\nTitle: " + .title + "\n\n" + (.body // ""))} end' "$TMP/review-requests-response.jsonl" >"$TMP/review-requests.jsonl"
-
-for FILE in "$TMP/assigned-issues.jsonl" "$TMP/passing-pull-requests.jsonl" "$TMP/review-requests.jsonl"
-do
-    while IFS= read -r FINDING
-    do
-        KEY="$(printf "%s" "$FINDING" | jq -e -r '.key')"
-        TITLE="$(printf "%s" "$FINDING" | jq -e -r '.title')"
-        TEXT="$(printf "%s" "$FINDING" | jq -e -r '.text')"
-        launch "$KEY" "$TITLE" "$TEXT"
-    done <"$FILE"
-done
+jq -s 'add | unique_by(.url)' "$TMP/involves.json" "$TMP/query.json" "$TMP/query-@.json" "$TMP/query-[bot].json" "$TMP/query-@-[bot].json"
