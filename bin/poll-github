@@ -3,16 +3,32 @@
 set -e
 
 usage() {
-    printf "Usage: %s [-q \e[4mquery\e[0m] [-s \e[4msince\e[0m]\n" "$(basename "$0")" >&2
-    printf "  -q \e[4mquery\e[0m  search query; prefix with \"@\" for an app or user; additionally suffix with \"[bot]\" for an app\n" >&2
-    printf "  -s \e[4msince\e[0m  absolute or relative timestamp (default \"24 hours ago\")\n" >&2
+    printf "Usage: %s [-d \e[4mpath\e[0m] [-o \e[4morganization\e[0m] [-q \e[4mquery\e[0m] [-s \e[4msince\e[0m] [--agent \e[4magent\e[0m]|--TODO \e[4mpath\e[0m]\n" "$(basename "$0")" >&2
+    printf "  -d \e[4mpath\e[0m          path of SQLite database for deduplicating output over many invocations\n" >&2
+    printf "  -o \e[4morganization\e[0m  GitHub organization to query (required if using a GitHub app installation token)\n" >&2
+    printf "  -q \e[4mquery\e[0m         search query; prefix with \"@\" for an app or user; additionally suffix with \"[bot]\" for an app\n" >&2
+    printf "  -s \e[4msince\e[0m         absolute or relative timestamp (default \"24 hours ago\")\n" >&2
+    printf "  --agent \e[4magent\e[0m    name or path of an agent harness to invoke to process each search result\n" >&2
+    printf "  --TODO \e[4mpath\e[0m      path of a plaintext/Markdown TODO list file containing a \"<!-- poll-github -->\" marker where new entries will be added\n" >&2
     exit "$1"
 }
 
-QUERY="" SINCE="24 hours ago"
+AGENT="" DATABASE="" ORG="" QUERY="" SINCE="24 hours ago" TODO=""
 while [ "$#" -gt 0 ]
 do
     case "$1" in
+
+        "-a"|"--agent") AGENT="$2" shift 2;;
+        "-a"*) AGENT="$(echo "$1" | cut -c"3-")" shift;;
+        "--agent="*) AGENT="$(echo "$1" | cut -d"=" -f"2-")" shift;;
+
+        "-d"|"--database") DATABASE="$2" shift 2;;
+        "-d"*) DATABASE="$(echo "$1" | cut -c"3-")" shift;;
+        "--database="*) DATABASE="$(echo "$1" | cut -d"=" -f"2-")" shift;;
+
+        "-o"|"--org") ORG="$2" shift 2;;
+        "-o"*) ORG="$(echo "$1" | cut -c"3-")" shift;;
+        "--org="*) ORG="$(echo "$1" | cut -d"=" -f"2-")" shift;;
 
         "-q"|"--query") QUERY="$2" shift 2;;
         "-q"*) QUERY="$(echo "$1" | cut -c"3-")" shift;;
@@ -22,6 +38,10 @@ do
         "-s"*) SINCE="$(echo "$1" | cut -c"3-")" shift;;
         "--since="*) SINCE="$(echo "$1" | cut -d"=" -f"2-")" shift;;
 
+        "-t"|"--todo"|"--TODO") TODO="$2" shift 2;;
+        "-t"*) TODO="$(echo "$1" | cut -c"3-")" shift;;
+        "--todo="*|"--TODO="*) TODO="$(echo "$1" | cut -d"=" -f"2-")" shift;;
+
         "-h"|"--help") usage 0;;
 
         *) usage 1;;
@@ -30,6 +50,21 @@ do
 done
 if [ -z "$QUERY" ]
 then usage 1
+fi
+
+TOKEN="$(
+    gh auth token ||
+    printf "protocol=https\nhost=github.com\npath=%s\nusername=x-access-token\n\n" "rcrowley-org/panboticon-skills" |
+    git credential fill |
+    sed -n 's/^password=//p'
+)"
+if [ -z "$TOKEN" ]
+then
+    echo "could not find a suitable GitHub token" >&2
+    if [ -z "$ORG" ]
+    then printf "consider setting -o \e[4morganization\e[0m\n" >&2
+    fi
+    exit 1
 fi
 
 SINCE_DATE=">=$(date -d "$SINCE" -u +"%Y-%m-%d")"
@@ -85,4 +120,83 @@ gh search issues \
     --updated "$SINCE_DATE" \
     >"$TMP/query-@-[bot].json"
 
-jq -s 'add | unique_by(.url)' "$TMP/involves.json" "$TMP/query.json" "$TMP/query-@.json" "$TMP/query-[bot].json" "$TMP/query-@-[bot].json"
+jq -s 'add | unique_by(.url)' \
+    "$TMP/involves.json" \
+    "$TMP/query.json" \
+    "$TMP/query-@.json" \
+    "$TMP/query-[bot].json" \
+    "$TMP/query-@-[bot].json" \
+    >"$TMP/merged.json"
+
+if [ "$DATABASE" ]
+then
+    mkdir -p "$(dirname "$DATABASE")"
+    sqlite3 "$DATABASE" <<EOF
+CREATE TABLE IF NOT EXISTS findings (
+    url TEXT PRIMARY KEY,
+    updated_at TEXT NOT NULL,
+    title TEXT,
+    state TEXT,
+    number INTEGER,
+    repository TEXT,
+    found_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+EOF
+
+    sqlite3 "$DATABASE" 'SELECT url || "|" || updated_at FROM findings;' >"$TMP/seen.txt" 2>/dev/null || : >"$TMP/seen.txt"
+    if [ -s "$TMP/seen.txt" ]
+    then jq -e --rawfile "seen" "$TMP/seen.txt" '
+        ($seen | rtrimstr("\n") | split("\n") | map(split("|") | {(.[0]): .[1]}) | add // {}) as $seen
+        | map(select(.url as $url | .updatedAt as $ua | $seen[$url] // "" | . != $ua))
+    ' "$TMP/merged.json"
+    else cat "$TMP/merged.json"
+    fi >"$TMP/new.json"
+
+    jq -e -r '.[] | [.url, .updatedAt, .title, .state, .number, .repository.nameWithOwner] | @tsv' "$TMP/new.json" |
+    while IFS="$(printf '\t')" read -r URL UPDATED_AT TITLE STATE NUMBER REPOSITORY
+    do sqlite3 "$DATABASE" "
+        INSERT INTO findings (url, updated_at, title, state, number, repository)
+        VALUES (
+            '$(printf "%s" "$URL" | sed "s/'/''/g")',
+            '$(printf "%s" "$UPDATED_AT" | sed "s/'/''/g")',
+            '$(printf "%s" "$TITLE" | sed "s/'/''/g")',
+            '$(printf "%s" "$STATE" | sed "s/'/''/g")',
+            '$(printf "%d" "$NUMBER" | sed "s/'/''/g")',
+            '$(printf "%s" "$REPOSITORY" | sed "s/'/''/g")'
+        ) ON CONFLICT(url) DO UPDATE SET
+            updated_at = excluded.updated_at,
+            title = excluded.title,
+            state = excluded.state,
+            number = excluded.number,
+            repository = excluded.repository;
+    "
+    done
+else cp "$TMP/merged.json" "$TMP/new.json"
+fi
+
+if [ "$AGENT" ]
+then
+    jq -e -r '
+        .[] |
+        "echo tmux new -d -s \"\(.repository.nameWithOwner)#\(.number)\" '"$AGENT"' -p \"Respond to activity on <\(.url)> since \(.updatedAt) with comments, commits, or reviews as appropriate.\""
+    ' "$TMP/new.json" |
+    sh
+elif [ "$TODO" ]
+then
+    if [ ! -s "$TODO" ]
+    then echo "<!-- poll-github -->" >"$TODO"
+    fi
+    if grep -F -q "<!-- poll-github -->" "$TODO"
+    then
+        {
+            awk '/<!-- poll-github -->/{exit} {print}' "$TODO"
+            jq -e -r '.[] | "* \(.title) <\(.url)> \(.updatedAt)"' "$TMP/new.json"
+            awk '/<!-- poll-github -->/{found=1} found' "$TODO"
+        } >"$TMP/TODO.txt"
+        mv "$TMP/TODO.txt" "$TODO"
+    else
+        echo "could not update TODO list: $TODO doesn't contain \"<!-- poll-github -->\" marker"
+    fi
+else
+    cat "$TMP/new.json"
+fi

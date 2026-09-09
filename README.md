@@ -38,3 +38,5 @@ Usage
     /skills audit # OpenCode
 
     /skill:audit # Pi
+
+    echo "* * * * * poll-github -d ~/.poll-github.sqlite3 -q @GITHUB_APP_NAME[bot] --agent pi" | crontab
