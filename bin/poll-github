@@ -145,12 +145,12 @@ EOF
             '$(printf "%s" "$STATE" | sed "s/'/''/g")',
             '$(printf "%d" "$NUMBER" | sed "s/'/''/g")',
             '$(printf "%s" "$REPOSITORY" | sed "s/'/''/g")'
-        ) ON CONFLICT(url) DO UPDATE SET
-            updated_at = excluded.updated_at,
-            title = excluded.title,
-            state = excluded.state,
-            number = excluded.number,
-            repository = excluded.repository;
+        ) ON CONFLICT (url) DO UPDATE SET
+            updated_at = EXCLUDED.updated_at,
+            title = EXCLUDED.title,
+            state = EXCLUDED.state,
+            number = EXCLUDED.number,
+            repository = EXCLUDED.repository;
     "
     done
 else cp "$TMP/merged.json" "$TMP/new.json"
