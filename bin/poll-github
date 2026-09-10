@@ -83,7 +83,7 @@ gh_search_issues() { # like `gh search issues` but works with Panboticon bot use
         -f \
         -s \
         "https://api.github.com/search/issues" |
-    jq -e '[.items[] | {
+    jq '[.items[] | {
         number,
         repository: {nameWithOwner: (.repository_url | ltrimstr("https://api.github.com/repos/"))},
         state,
@@ -127,14 +127,14 @@ EOF
 
     sqlite3 "$DATABASE" 'SELECT url || "|" || updated_at FROM findings;' >"$TMP/seen.txt" 2>/dev/null || : >"$TMP/seen.txt"
     if [ -s "$TMP/seen.txt" ]
-    then jq -e --rawfile "seen" "$TMP/seen.txt" '
+    then jq --rawfile "seen" "$TMP/seen.txt" '
         ($seen | rtrimstr("\n") | split("\n") | map(split("|") | {(.[0]): .[1]}) | add // {}) as $seen
         | map(select(.url as $url | .updatedAt as $ua | $seen[$url] // "" | . != $ua))
     ' "$TMP/merged.json"
     else cat "$TMP/merged.json"
     fi >"$TMP/new.json"
 
-    jq -e -r '.[] | [.url, .updatedAt, .title, .state, .number, .repository.nameWithOwner] | @tsv' "$TMP/new.json" |
+    jq -r '.[] | [.url, .updatedAt, .title, .state, .number, .repository.nameWithOwner] | @tsv' "$TMP/new.json" |
     while IFS="$(printf '\t')" read -r URL UPDATED_AT TITLE STATE NUMBER REPOSITORY
     do sqlite3 "$DATABASE" "
         INSERT INTO findings (url, updated_at, title, state, number, repository)
@@ -158,7 +158,7 @@ fi
 
 if [ "$AGENT" ]
 then
-    jq -e -r '
+    jq -r '
         .[] |
         "echo tmux new -d -s \"\(.repository.nameWithOwner)#\(.number)\" '"$AGENT"' -p \"Respond to activity on <\(.url)> since \(.updatedAt) with comments, commits, or reviews as appropriate.\""
     ' "$TMP/new.json" |
