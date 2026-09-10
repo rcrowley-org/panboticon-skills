@@ -39,6 +39,6 @@ Usage
 
     /skill:audit # Pi
 
-    echo "* * * * * flock -n ~/.poll-github.sqlite3 poll-github -d ~/.poll-github.sqlite3 -q @GITHUB_USERNAME --TODO TODO.txt" | crontab
+    echo "* * * * * flock -n ~/src/panboticon-skills/bin/poll-github ~/src/panboticon-skills/bin/poll-github -d ~/.poll-github.sqlite3 -q @GITHUB_USERNAME --TODO TODO.txt" | crontab
 
-    echo "* * * * * flock -n ~/.poll-github.sqlite3 poll-github -d ~/.poll-github.sqlite3 -q @GITHUB_APP_NAME[bot] --agent pi" | crontab
+    echo "* * * * * flock -n ~/src/panboticon-skills/bin/poll-github ~/src/panboticon-skills/bin/poll-github -d ~/.poll-github.sqlite3 -q @GITHUB_APP_NAME[bot] --agent pi" | crontab
