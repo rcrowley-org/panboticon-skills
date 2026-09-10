@@ -160,7 +160,7 @@ if [ "$AGENT" ]
 then
     jq -r '
         .[] |
-        "echo tmux new -d -s \"\(.repository.nameWithOwner)#\(.number)\" '"$AGENT"' -p \"Respond to activity on <\(.url)> since \(.updatedAt) with comments, commits, or reviews as appropriate.\""
+        "tmux new -d -s \"\(.repository.nameWithOwner)#\(.number)\" '"$AGENT"' -p \"Respond to activity on <\(.url)> since \(.updatedAt) with comments, commits, or reviews as appropriate.\""
     ' "$TMP/new.json" |
     sh
 elif [ "$TODO" ]
