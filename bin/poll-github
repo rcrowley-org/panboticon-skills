@@ -2,6 +2,10 @@
 
 set -e
 
+if [ "$FLOCK" != "$0" ]
+then exec env FLOCK="$0" flock -n "$0" "$0" "$@"
+fi
+
 usage() {
     printf "Usage: %s [-d \e[4mpath\e[0m] [-o \e[4morganization\e[0m] [-q \e[4mquery\e[0m] [-s \e[4msince\e[0m] [--agent \e[4magent\e[0m]|--TODO \e[4mpath\e[0m]\n" "$(basename "$0")" >&2
     printf "  -d \e[4mpath\e[0m          path of SQLite database for deduplicating output over many invocations\n" >&2
@@ -50,10 +54,6 @@ do
 done
 if [ -z "$QUERY" ]
 then usage 1
-fi
-
-if [ "$FLOCK" != "$0" ]
-then exec env FLOCK="$0" flock -n "$0" "$0" "$@"
 fi
 
 TOKEN="$(
