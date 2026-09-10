@@ -160,9 +160,22 @@ if [ "$AGENT" ]
 then
     jq -r '
         .[] |
-        "tmux new -d -s \"\(.repository.nameWithOwner)#\(.number)\" '"$AGENT"' -p \"Respond to activity on <\(.url)> since \(.updatedAt) with comments, commits, or reviews as appropriate.\""
+        "Respond to activity on <\(.url)> since \(.updatedAt) with comments, commits, or reviews as appropriate. Use the `gh` and `git` commands."
     ' "$TMP/new.json" |
-    sh
+    while read PROMPT
+    do
+        AGENT_TMP="$(mktemp)" PROMPT_TMP="$(mktemp)"
+        cat >"$AGENT_TMP" <<EOF
+set -e
+trap "rm -f \"$AGENT_TMP\" \"$PROMPT_TMP\"" EXIT
+if [ -e "/proc/self/fd/3" ]
+then flock -u 3
+fi
+"$AGENT" -p @"$PROMPT_TMP"
+EOF
+        echo "$PROMPT" >"$PROMPT_TMP"
+        nohup sh -c "sh \"$AGENT_TMP\" 2>&1 | logger" <"/dev/null" >"/dev/null" 2>&1 &
+    done
 elif [ "$TODO" ]
 then
     if [ ! -s "$TODO" ]
