@@ -114,7 +114,7 @@ jq -s 'add | unique_by(.url)' \
 if [ "$DATABASE" ]
 then
     sqlite3 "$DATABASE" <<EOF
-CREATE TABLE IF NOT EXISTS findings (
+CREATE TABLE IF NOT EXISTS issues (
     url TEXT PRIMARY KEY,
     updated_at TEXT NOT NULL,
     title TEXT,
@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS findings (
 );
 EOF
 
-    sqlite3 "$DATABASE" 'SELECT url || "|" || updated_at FROM findings;' >"$TMP/seen.txt" 2>/dev/null || : >"$TMP/seen.txt"
+    sqlite3 "$DATABASE" 'SELECT url || "|" || updated_at FROM issues;' >"$TMP/seen.txt" 2>/dev/null || : >"$TMP/seen.txt"
     if [ -s "$TMP/seen.txt" ]
     then jq --rawfile "seen" "$TMP/seen.txt" '
         ($seen | rtrimstr("\n") | split("\n") | map(split("|") | {(.[0]): .[1]}) | add // {}) as $seen
@@ -137,7 +137,7 @@ EOF
     jq -r '.[] | [.url, .updatedAt, .title, .state, .number, .repository.nameWithOwner] | @tsv' "$TMP/new.json" |
     while IFS="$(printf '\t')" read -r URL UPDATED_AT TITLE STATE NUMBER REPOSITORY
     do sqlite3 "$DATABASE" "
-        INSERT INTO findings (url, updated_at, title, state, number, repository)
+        INSERT INTO issues (url, updated_at, title, state, number, repository)
         VALUES (
             '$(printf "%s" "$URL" | sed "s/'/''/g")',
             '$(printf "%s" "$UPDATED_AT" | sed "s/'/''/g")',
