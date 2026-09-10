@@ -52,6 +52,10 @@ if [ -z "$QUERY" ]
 then usage 1
 fi
 
+if [ "$FLOCK" != "$0" ]
+then exec env FLOCK="$0" flock -n "$0" "$0" "$@"
+fi
+
 TOKEN="$(
     gh auth token ||
     printf "protocol=https\nhost=github.com\npath=%s\nusername=x-access-token\n\n" "rcrowley-org/panboticon-skills" |
@@ -113,7 +117,6 @@ jq -s 'add | unique_by(.url)' \
 
 if [ "$DATABASE" ]
 then
-    mkdir -p "$(dirname "$DATABASE")"
     sqlite3 "$DATABASE" <<EOF
 CREATE TABLE IF NOT EXISTS findings (
     url TEXT PRIMARY KEY,
