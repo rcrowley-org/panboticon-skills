@@ -54,7 +54,7 @@ fi
 
 TOKEN="$(
     gh auth token 2>"/dev/null" ||
-    printf "protocol=https\nhost=github.com\npath=%s\nusername=x-access-token\n\n" "rcrowley-org/panboticon-skills" |
+    printf "protocol=https\nhost=github.com\npath=%s\nusername=x-access-token\n\n" "$ORGANIZATION/x" |
     git credential fill |
     sed -n 's/^password=//p'
 )"
