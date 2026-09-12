@@ -160,7 +160,7 @@ if [ "$AGENT" ]
 then
     jq -r '
         .[] |
-        "Respond to activity on <\(.url)> since \(.updatedAt) with comments, commits, or reviews as appropriate. Use the `gh` and `git` commands."
+        "Use the `gh` and `git` commands to read and respond to activity on <\(.url)> since your most recent comment/commit/review or \(.updatedAt) (whichever is earlier) with comments, commits, or reviews as appropriate. Do not post anything if the most recent activity is yours."
     ' "$TMP/new.json" |
     while read PROMPT
     do
